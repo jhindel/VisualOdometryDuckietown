@@ -14,47 +14,49 @@ class DuckietownDataset(Dataset):
         self.img_dir = img_dir
         filenames_dir = sorted(next(walk(self.img_dir), (None, None, []))[2])
         self.absolute_pos['img'] = filenames_dir
-        self.absolute_pos = self.absolute_pos[53:]
-        self.skip = 5
+        self.absolute_pos = self.absolute_pos[55:]
+        self.skip = 1
         self.K = K
         self.D = D
 
     def __len__(self):
-        return len(self.absolute_pos)
+        return len(self.absolute_pos // self.skip)
 
     def __getitem__(self, idx):
-        print(idx)
         data = []
-        for i in (idx, idx + self.skip):
+        old_pose_idx = idx*self.skip
+        new_pose_idx = (idx+1)*self.skip
+        for i in (old_pose_idx, new_pose_idx):
             img_path = os.path.join(self.img_dir, self.absolute_pos.iloc[i]["img"])
             img = cv2.imread(img_path)
             img, newK = self.preprocess(img)
-            print(self.absolute_pos.iloc[i]["img"])
+            print(self.absolute_pos.iloc[i]["img"], img.shape)
             data.append(img)
         data = np.array(data)
-        old_pose = self.absolute_pos.iloc[idx][["x", "y", "theta_correct"]].to_numpy()
-        new_pose = self.absolute_pos.iloc[idx + self.skip][
-                                                        ["x", "y", "theta_correct"]].to_numpy()
-        # print(self.absolute_pos.iloc[idx][["x", "y", "theta_correct"]])
+        old_pose = self.absolute_pos.iloc[old_pose_idx][["x", "y", "theta_correct"]].to_numpy()
+        new_pose = self.absolute_pos.iloc[new_pose_idx][["x", "y", "theta_correct"]].to_numpy()
         relative_pos = compute_relative_pose_matrix(old_pose, new_pose)
         scale = np.linalg.norm(new_pose[:2] - old_pose[:2])
-        return data, relative_pos, scale, newK
+        # print("old_pose", old_pose, "new pose", new_pose, "scale", scale, newK)
+        return data, relative_pos, scale, new_pose, old_pose, newK
 
 
     def preprocess(self, img):
         # img = img[160:480, 0:640]
-        correct_img = False
+        correct_img = True
         fisheye = False
         fisheye2 = False
         if correct_img:
-            h, w = img.shape[:2]
+            height, width = img.shape[:2]
             # print(img.shape, h, w)
-            newK, roi = cv2.getOptimalNewCameraMatrix(self.K, self.D, (w, h), 1,
-                                                              (w, h))
+            newK, roi = cv2.getOptimalNewCameraMatrix(self.K, self.D, (width, height), 1,
+                                                              (width, height))
+            # mapx, mapy = cv2.initUndistortRectifyMap(self.K, self.D, None, newK, dim, 5)
+            # undistorted_image = cv2.remap(img, mapx, mapy, cv2.INTER_LINEAR)
             undistorted_image = cv2.undistort(img, self.K, self.D, None, newK)
 
             x, y, w, h = roi
-            undistorted_image = undistorted_image[y:+y+h, x:x+w]
+            undistorted_image = undistorted_image[y:y+h, x:x+w]
 
             img = undistorted_image
             print("image corrected")
@@ -83,6 +85,7 @@ class DuckietownDataset(Dataset):
                                                                           (new_size[1], new_size[0]),
                                                                           np.eye(3), balance=1, fov_scale=1)
             img = cv2.fisheye.undistortImage(img, self.K, D=self.D[:-1], Knew=newK)
+            print("image corrected fisheye2")
         else:
             newK = self.K
             print("image not corrected")
@@ -142,6 +145,18 @@ def get_pose_matrix(pose):
                          [0, 1, 0, 0],
                          [-np.sin(angle), 0, np.cos(angle), pose[1]],
                          [0, 0, 0, 1]])
+
+    return matrix
+
+def get_rotation_matrix(angle):
+    """matrix = np.asarray([[np.cos(pose[2]), -np.sin(pose[2]), 0, pose[0]],
+                        [0, 0, 1, 0],
+                        [np.sin(pose[2]), np.cos(pose[2]), 0, pose[1]],
+                        [0, 0, 0, 1]])"""
+
+    matrix = np.asarray([[np.cos(angle), np.sin(angle), 0],
+                         [-np.sin(angle), np.cos(angle), 0],
+                         [0, 0, 1]])
 
     return matrix
 

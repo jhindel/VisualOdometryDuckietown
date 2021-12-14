@@ -3,7 +3,7 @@
 # https://github.com/kemfic/VOpy/blob/vopy_old/frame.py
 # https://learnopencv.com/rotation-matrix-to-euler-angles/
 
-from dataset import DuckietownDataset
+from .dataset import DuckietownDataset, get_rotation_matrix
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
@@ -47,7 +47,7 @@ def show_matched_keypoints(data, src_pts, dst_pts, mask):
         img2 = cv2.circle(img2, (int(src_pts[idx[0]][i][0][0]), int(src_pts[idx[0]][i][0][1])), color=color,
                           radius=10, thickness=2)
         img3 = cv2.circle(img3, (int(dst_pts[idx[0]][i][0][0]), int(dst_pts[idx[0]][i][0][1])), color=color,
-                           radius=10, thickness=2)
+                          radius=10, thickness=2)
     plt.imshow(cv2.cvtColor(img2, cv2.COLOR_RGB2BGR))
     plt.title("Image at time t")
     plt.show()
@@ -59,7 +59,7 @@ def show_matched_keypoints(data, src_pts, dst_pts, mask):
 # Calculates rotation matrix to euler angles
 # The result is the same as MATLAB except the order
 # of the euler angles ( x and z are swapped ).
-def rotationMatrixToEulerAngles(R):
+def get_euler_angles(R):
     assert (isRotationMatrix(R))
 
     sy = math.sqrt(R[0, 0] * R[0, 0] + R[1, 0] * R[1, 0])
@@ -78,21 +78,45 @@ def rotationMatrixToEulerAngles(R):
     return np.array([x, y, z])
 
 
+def get_mono_coordinates(t):
+    # We multiply by the diagonal matrix to fix our vector
+    # onto same coordinate axis as true values
+    diag = np.array([[-1, 0, 0],
+                     [0, -1, 0],
+                     [0, 0, -1]])
+    adj_coord = np.matmul(diag, t)
+
+    return adj_coord.flatten()
+
+
 K = np.array([[373.2779426913342, 0.0, 318.29785021099894],
               [0.0, 367.9439633567062, 263.9058079734077],
               [0.0, 0.0, 1.0]])
+# switched K
+# K = np.array([[373.2779426913342, 0.0, 263.9058079734077],
+#              [0.0, 367.9439633567062, 318.29785021099894],
+#              [0.0, 0.0, 1.0]])
 
 D = np.array([-0.3017710043972695, 0.07403470502924431, 0.0013028188828223006, 0.00022752165172560925, 0.0])
 
-dataloader = DuckietownDataset("alex_2small_loops_ground_truth.txt", "alex_2small_loops_images", K=K, D=D)
+dataset = DuckietownDataset("alex_2small_loops_ground_truth.txt", "alex_2small_loops_images", K=K, D=D)
 
-for data, rel_pos, scale, K in dataloader:
+position_figure = plt.figure()
+position_axes = position_figure.add_subplot(1, 1, 1)
+position_axes.set_aspect('equal', adjustable='box')
+
+test_loop = 0
+error = [0, 0, 0]
+
+plot = False
+
+for data, rel_pos, scale, ground_truth, old_pose, cleaned_K in dataset:
+
     orb = cv2.ORB_create()
 
     # find the keypoints and descriptors with ORB
     kp1, des1 = orb.detectAndCompute(cv2.cvtColor(data[0], cv2.COLOR_BGR2GRAY), None)
     kp2, des2 = orb.detectAndCompute(cv2.cvtColor(data[1], cv2.COLOR_BGR2GRAY), None)
-
 
     # create BFMatcher object
     bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
@@ -101,48 +125,73 @@ for data, rel_pos, scale, K in dataloader:
 
     # Sort them in the order of their distance.
     matches = sorted(matches, key=lambda x: x.distance)
-    # Draw first 10 matches.
-    img3 = cv2.drawMatches(cv2.cvtColor(data[0], cv2.COLOR_BGR2GRAY), kp1,
-                           cv2.cvtColor(data[1], cv2.COLOR_BGR2GRAY), kp2, matches[:10], None, flags=2)
-    plt.imshow(img3), plt.show()
+
+    if plot:
+        # Draw first 10 matches.
+        img3 = cv2.drawMatches(cv2.cvtColor(data[0], cv2.COLOR_BGR2GRAY), kp1,
+                               cv2.cvtColor(data[1], cv2.COLOR_BGR2GRAY), kp2, matches[:10], None, flags=2)
+        plt.imshow(img3), plt.show()
 
     # extract the matched keypoints
     src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
     dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
 
-    # print(f" K {K} \n D {D}")
-    # src_pts_norm = cv2.undistortPoints(src_pts, cameraMatrix=K, distCoeffs=D)
-    # dst_pts_norm = cv2.undistortPoints(src_pts, cameraMatrix=K, distCoeffs=D)
-
-    E, mask = cv2.findEssentialMat(src_pts, dst_pts, cameraMatrix=K, method=cv2.RANSAC, prob=0.9, threshold=0.1)
-    # E, mask = cv2.findEssentialMat(src_pts_norm, dst_pts_norm, focal=1.0, pp=(0., 0.),
-    #                               method=cv2.RANSAC, prob=0.9, threshold=0.1)
-    # print("E", E)
-
-    show_matched_keypoints(data, src_pts, dst_pts, mask)
-    print("moving points", src_pts[0], dst_pts[0])
+    E, mask = cv2.findEssentialMat(src_pts, dst_pts, cameraMatrix=cleaned_K, method=cv2.RANSAC,
+                                   prob=0.999, threshold=1.0)
+    if plot:
+        show_matched_keypoints(data, src_pts, dst_pts, mask)
 
     points, R, t, mask = cv2.recoverPose(E, src_pts, dst_pts)
-
-    # if (scale > 0.1 and abs(t[2][0]) > abs(t[0][0]) and abs(t[2][0]) > abs(t[1][0])):
-    #    t = self.R.dot(t)
-    #    self.R = R.dot(self.R)
-
 
     H = np.hstack((R, t))
     H = np.vstack((H, [0, 0, 0, 1]))
 
-    # print("euler angles", rotationMatrixToEulerAngles(R))
-    # R1, R2, t1 = cv2.decomposeEssentialMat(E)
-    # print(f" R1 {R1} \n R2 {R2} \n t1 {t1} \n rel_pos {rel_pos}")
-    # t_e = p2e(t)
+    print(f" H {H}")  # \n rp {rel_pos}  \n norm {np.linalg.norm(t)}")
 
-    print(f" H {H} \n rel_pos {rel_pos} \n norm {np.linalg.norm(t)}")
+    # adapt t to have a result in world_frame
+    t[2] = -t[2]
+    # t[0] = -t[0]
+    t = t * scale
 
-    print(np.linalg.norm(rel_pos[:, 3]))
+    change_z = ground_truth[0] - old_pose[0] # x for robot, z for image
+    change_x = ground_truth[1] - old_pose[1] # y for robot, x for image
+    print(f"scaled t {t} \n absolute change {change_z, change_x}")
+    error[0] += np.square(change_z - t[2]).mean(axis=0) # z for image
+    error[1] += np.square(change_x - t[1]).mean(axis=0) # x for image
 
-    rel_pos[:, 3] = rel_pos[:, 3] / np.linalg.norm(rel_pos[:, 3])
+    # extract r from rotation matrix and compare
+    rot_angle = get_euler_angles(R)
+    rot_angle, _ = cv2.Rodrigues(R)
+    change_angle = ground_truth[2] - old_pose[2]
 
-    print(rel_pos)
+    error[2] += np.square(change_angle - rot_angle[0]).mean(axis=0)
+
+    print("Euler angles", rot_angle, "ground truth", change_angle)
+
+    # TODO convert to real coordinates
+    # if (scale > 0.1 and abs(t[2, 0]) > abs(t[0, 0]) and abs(t[2, 0]) > abs(t[1, 0])):
+    #    t = self.R.dot(t)
+    #    self.R = R.dot(self.R)
+
+    current_pos = [old_pose[0] + t[2,0], old_pose[1] + t[0,0], old_pose[2] + rot_angle[1,0]]
+
+    print(ground_truth, current_pos)
+
+    # coord = get_mono_coordinates(current_pos)
+
+    # TODO plot this
+
+    # print("ground truth", ground_truth, "estimation", coord, coord.shape, "scale", scale)
+    position_axes.scatter(ground_truth[0], ground_truth[1], marker='^', c='g')
+    position_axes.scatter(current_pos[0], current_pos[1], c='r')
 
     print("______________________________________________________")
+
+    if test_loop > 50:
+        position_figure.show()
+        break
+    test_loop += 1
+
+print("error x", error[0] / (test_loop + 1))
+print("error y", error[1] / (test_loop + 1))
+print("error angle", error[2] / (test_loop + 1))
