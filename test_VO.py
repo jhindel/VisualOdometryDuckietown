@@ -28,9 +28,9 @@ img_ta[10:14, 1:5] = obj2
 img_tc = np.roll(img_t, 5, axis=1)
 img_tc[10:14, 20:24] = obj2
 
-img_ta = np.rot90(img_ta, 1)
-img_tb = np.rot90(img_tb, 1)
-img_tc = np.rot90(img_tc, 1)
+img_ta = np.rot90(img_ta, 3)
+img_tb = np.rot90(img_tb, 3)
+img_tc = np.rot90(img_tc, 3)
 
 fig, axs = plt.subplots(1, 3)
 fig.suptitle('Images across 3 frames')
@@ -61,3 +61,7 @@ H = np.hstack((R, t))
 print(f" H {H} \n")
 
 print(f" t {t} \n")
+
+rot_angle, _ = cv2.Rodrigues(R)
+
+print(f" Rot_angle {rot_angle} \n")
