@@ -1,7 +1,7 @@
 # https://stackoverflow.com/questions/33670222/how-to-use-surf-and-sift-detector-in-opencv-for-python
 # https://answers.opencv.org/question/221922/how-to-exclude-outliers-from-detected-orb-features/
 # https://github.com/kemfic/VOpy/blob/vopy_old/frame.py
-# https://learnopencv.com/rotation-matrix-to-euler-angles/
+
 
 from VisualOdometryDuckietown.dataset import DuckietownDataset
 import cv2
@@ -14,9 +14,12 @@ from itertools import product as cartProduct
 import sys
 import os
 
-
-# Checks if a matrix is a valid rotation matrix.
 def isRotationMatrix(R):
+    """ Checks if a matrix is a valid rotation matrix.
+        source:  https://learnopencv.com/rotation-matrix-to-euler-angles/
+        :param R: rotation matrix
+        :return: error
+        """
     Rt = np.transpose(R)
     shouldBeIdentity = np.dot(Rt, R)
     I = np.identity(3, dtype=R.dtype)
@@ -25,6 +28,11 @@ def isRotationMatrix(R):
 
 
 def rotationMatrixToEulerAngles(R):
+    """
+    source:  https://learnopencv.com/rotation-matrix-to-euler-angles/
+    :param R: rotation matrix
+    :return: 3 euler angles
+    """
     sy = math.sqrt(R[0, 0] * R[0, 0] + R[1, 0] * R[1, 0])
 
     singular = sy < 1e-6
@@ -41,31 +49,15 @@ def rotationMatrixToEulerAngles(R):
     return x, y, z
 
 
-def isclose(x, y, rtol=1.e-5, atol=1.e-8):
-    return abs(x - y) <= atol + rtol * abs(y)
-
-
-def euler_angles_from_rotation_matrix(R):
-    '''
-    From a paper by Gregory G. Slabaugh (undated),
-    "Computing Euler angles from a rotation matrix
-    '''
-    phi = 0.0
-    if isclose(R[2, 0], -1.0):
-        theta = math.pi / 2.0
-        psi = math.atan2(R[0, 1], R[0, 2])
-    elif isclose(R[2, 0], 1.0):
-        theta = -math.pi / 2.0
-        psi = math.atan2(-R[0, 1], -R[0, 2])
-    else:
-        theta = -math.asin(R[2, 0])
-        cos_theta = math.cos(theta)
-        psi = math.atan2(R[2, 1] / cos_theta, R[2, 2] / cos_theta)
-        phi = math.atan2(R[1, 0] / cos_theta, R[0, 0] / cos_theta)
-    return psi, theta, phi
-
-
 def show_matched_keypoints(data, src_pts, dst_pts, mask):
+    """
+
+    :param data: images
+    :param src_pts: keypoints in image1
+    :param dst_pts: keypoints in image2
+    :param mask: mask showing indexes of keypoints used by findEssentialMatrix function
+    :return:
+    """
     img2 = data[0].copy()
     img3 = data[1].copy()
 
@@ -87,6 +79,12 @@ def show_matched_keypoints(data, src_pts, dst_pts, mask):
 
 
 def eval_absolute_poses(relative_poses_pred, absolute_poses):
+    """
+
+    :param relative_poses_pred: relative pose prediction (change in absolute poses)
+    :param absolute_poses: ground truth absolute poses
+    :return: calculated mean absolute pose errors (x,y, theta), visualization
+    """
     absolute_poses = np.asarray(absolute_poses)
     relative_poses_pred = np.asarray(relative_poses_pred)
     absolute_poses_pred = utils.relative2absolute(relative_poses_pred, absolute_poses[0])
@@ -109,6 +107,14 @@ def eval_absolute_poses(relative_poses_pred, absolute_poses):
 
 
 def calc_trajectory(dataset, trajectory_length, plot=False, debug_mode=False):
+    """
+
+    :param dataset: instance of dataset.py
+    :param trajectory_length: sequence length (used to quit loop)
+    :param plot: boolean indicating if visualizations should be displayed
+    :param debug_mode: boolean used to indicate print outs
+    :return:
+    """
     error = []
     relative_poses_pred = []
     relative_poses = []
@@ -152,10 +158,6 @@ def calc_trajectory(dataset, trajectory_length, plot=False, debug_mode=False):
 
         if E is None or E.shape != (3, 3):
             print(idx + 30, len(src_pts), len(dst_pts))
-            # plt.imshow(cv2.cvtColor(data[0], cv2.COLOR_RGB2BGR))
-            # plt.show()
-            # plt.imshow(cv2.cvtColor(data[1], cv2.COLOR_RGB2BGR))
-            # plt.show()
             relative_poses_pred.append(rel_pose)
             absolute_poses.append([new_pose[0], new_pose[1], new_pose[2]])
             relative_poses.append(rel_pose)
@@ -166,22 +168,22 @@ def calc_trajectory(dataset, trajectory_length, plot=False, debug_mode=False):
 
         points, R, t, mask = cv2.recoverPose(E, src_pts, dst_pts)
 
+        # complete transformation matrix
         H = np.hstack((R, t))
         H = np.vstack((H, [0, 0, 0, 1]))
 
         if debug_mode:
             print(f" H {H}")
 
-        # adapt t to have a result in world_frame
-        # scale = np.linalg.norm(ground_truth[:2] - old_pose[:2])
-
+        # adapt t to have a result in world_frame, if duckietown has negative forward motion
+        # revert forward and sideward motion as not possible in dataset
         if (t[2][0] < 0) and (rel_pose[0] > 0):
             t[2][0] = - t[2][0]
             t[1][0] = - t[1][0]
 
+        # ground truth
         change_x = rel_pose[0]
         change_y = rel_pose[1]
-        # scale = np.linalg.norm(rel_pose[:2])  # [:2])
         scale = np.sqrt(np.sum((rel_pose[0] - rel_pose[1]) ** 2))
 
         change_x_pred = t[2][0] * scale
@@ -191,16 +193,20 @@ def calc_trajectory(dataset, trajectory_length, plot=False, debug_mode=False):
                   f"relative pose ground truth {change_x}, {change_y}")
         error_x = (change_x - change_x_pred) ** 2  # z for image
         error_y = (change_y - change_y_pred) ** 2  # x for image
+        # vertical movement should be close to 0, duckiebots don't fly
         error_z = (t[0][0] * scale) ** 2
 
         # extract r from rotation matrix and compare
         if not isRotationMatrix(R):
             print(idx + 30, R)
         x, y, z = rotationMatrixToEulerAngles(R)
-        # x, y, z = euler_angles_from_rotation_matrix(R)
+
+        # tested different techniques of Euler angles
         # angles, _ = cv2.Rodrigues(R)
         # theta = np.sqrt(angles[0][0]**2 + angles[1][0]**2 + angles[2][0]**2)
         # y = angles/theta
+
+        # rotation angle is y of Euler angles
         change_angle_pred = y
         change_angle = rel_pose[2]
         error_angle = (change_angle - change_angle_pred) ** 2
@@ -209,11 +215,11 @@ def calc_trajectory(dataset, trajectory_length, plot=False, debug_mode=False):
         error.append([error_x, error_y, error_angle, error_z])
 
         relative_pose_pred = [change_x_pred, change_y_pred, change_angle_pred]
-        # relative_pose_pred = [change_x, change_y, change_angle]
         if debug_mode:
             print(relative_pose_pred)
             print("______________________________________________________")
         relative_poses_pred.append(relative_pose_pred)
+        # ground truth
         absolute_poses.append([new_pose[0], new_pose[1], new_pose[2]])
         relative_poses.append([change_x, change_y, change_angle])
 
@@ -223,6 +229,7 @@ def calc_trajectory(dataset, trajectory_length, plot=False, debug_mode=False):
 
     error = np.asarray(error)
 
+    # calculate mean absolute error
     mae, chart = eval_absolute_poses(relative_poses_pred, absolute_poses)
 
     return error, mae, chart, (idx + 30)
@@ -232,11 +239,14 @@ def calc_trajectory(dataset, trajectory_length, plot=False, debug_mode=False):
 
 
 if __name__ == "__main__":
+    # instrinsic camera matrix, retrieved from ros_bag.py
     K = np.array([[373.2779426913342, 0.0, 318.29785021099894],
                   [0.0, 367.9439633567062, 263.9058079734077],
                   [0.0, 0.0, 1.0]])
+    # distorsion matrix, retrieved from ros_bag.py
     D = np.array([-0.3017710043972695, 0.07403470502924431, 0.0013028188828223006, 0.00022752165172560925, 0.0])
 
+    # dataset_dic including all text files and sub-folders
     dataset_dic = {
         "sub_folder": "/Users/julia/Documents/UNI/Master/Montréal/AV/project/duckietown_visual_odometry/data/",
         "filenames": ['alex_2small_8_retest_ground_truth.txt',
@@ -270,11 +280,12 @@ if __name__ == "__main__":
         print(dataset_dic["filenames"][i])
         dataset = DuckietownDataset(dataset_dic["filenames"][i], dataset_dic["dir"][i], K=K, D=D,
                                     debug_mode=False)
-
+        # skip first 30 poses as no movement
         trajectory_len = len(dataset) - 31
 
         error, mae, chart, idx = calc_trajectory(dataset, trajectory_len, plot=False, debug_mode=False)
 
+        # build table for evaluation
         df = df.append({"data": str(dataset_dic["filenames"][i]),
                         "poses": idx,
                         "MSE forward": np.mean(error[:, 0]),
@@ -285,7 +296,7 @@ if __name__ == "__main__":
                         "MAE position y": mae[1],
                         "MAE orientation": mae[2],
                         "chart": chart}, ignore_index=True)
-
+    # save table to csv file
     df.to_csv("stats_skip2_test.csv", float_format='%.6f')
 
     print(df)

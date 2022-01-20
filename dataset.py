@@ -6,18 +6,23 @@ from os import walk
 import numpy as np
 import utils
 import sys
-import matplotlib.pyplot as plt
 
 class DuckietownDataset(Dataset):
     def __init__(self, annotations_file, img_dir, K, D, debug_mode=False):
+        # read file with ground truth data
         self.absolute_pos = pd.read_fwf(annotations_file)
         self.img_dir = img_dir
         filenames_dir = sorted(next(walk(self.img_dir), (None, None, []))[2])
         self.absolute_pos['img'] = filenames_dir
+        # skip first 30 poses as duckiebots were not moving yet
         self.absolute_pos = self.absolute_pos[30:]
-        self.skip = 2
+        # skipping of frames
+        self.skip = 1
+        # intrinsic camera matrix K
         self.K = K
+        # distorsion vector
         self.D = D
+        # enable for print outs
         self.debug_mode = debug_mode
         if debug_mode:
             with pd.option_context('display.max_rows', None, 'display.max_columns',
@@ -34,7 +39,7 @@ class DuckietownDataset(Dataset):
         for i in (old_pose_idx, new_pose_idx):
             img_path = os.path.join(self.img_dir, self.absolute_pos.iloc[i]["img"])
             img = cv2.imread(img_path)
-            if img.size ==0:
+            if img.size == 0:
                 print(f"ERROR with image {i}")
                 sys.exit()
             img, newK = self.preprocess(img)
@@ -48,16 +53,15 @@ class DuckietownDataset(Dataset):
 
     def preprocess(self, img):
         # img = img[160:480, 0:640]
+        # select preprocessing techniques
         correct_img = True
         fisheye = False
         fisheye2 = False
+        # undistort image and cropping
         if correct_img:
             height, width = img.shape[:2]
-            # print(img.shape, h, w)
             newK, roi = cv2.getOptimalNewCameraMatrix(self.K, self.D, (width, height), 1,
                                                       (width, height))
-            # mapx, mapy = cv2.initUndistortRectifyMap(self.K, self.D, None, newK, dim, 5)
-            # undistorted_image = cv2.remap(img, mapx, mapy, cv2.INTER_LINEAR)
             undistorted_image = cv2.undistort(img, self.K, self.D, None, newK)
 
             x, y, w, h = roi
@@ -66,9 +70,8 @@ class DuckietownDataset(Dataset):
             img = undistorted_image
             if self.debug_mode:
                 print("image corrected")
-
+        # fisheye specific undistorsion (didn't work as well)
         elif fisheye:
-
             new_size = img.shape
 
             print(self.D[:-1], self.K, self.D.dtype)
@@ -88,8 +91,8 @@ class DuckietownDataset(Dataset):
             if self.debug_mode:
                 print("image corrected fisheye")
 
+        # fisheye specific undistorsion variation 2 (didn't work as well)
         elif fisheye2:
-
             new_size = img.shape
             newK = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(self.K, self.D[:-1],
                                                                           (new_size[1], new_size[0]),
@@ -104,6 +107,7 @@ class DuckietownDataset(Dataset):
 
         return img, newK
 
+# used for testing of dataset class
 if __name__ == "__main__":
     K = np.array([[373.2779426913342, 0.0, 318.29785021099894],
                   [0.0, 367.9439633567062, 263.9058079734077],

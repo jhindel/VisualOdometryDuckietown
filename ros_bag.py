@@ -1,5 +1,7 @@
 import rosbag
 
+# extract K (intrinsic camera matrix) and D (distorsion matrix) from ros bag files
+
 bag = rosbag.Bag('alex_1big_8.bag')
 
 for topic, msg, t in bag.read_messages(topics=['/alex/camera_node/camera_info']): #['distortion_model', 'D', 'K']
